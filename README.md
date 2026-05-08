@@ -29,6 +29,7 @@ Then close and reopen PowerShell:
 
 ```powershell
 ctx --help
+ctx doctor
 ctx save
 ```
 
@@ -38,6 +39,7 @@ Use it inside another project by passing the full path to `ctx.py`:
 cd path\to\your-project
 python "C:\Users\armaa\OneDrive\Desktop\contextdrop\ctx.py" init
 python "C:\Users\armaa\OneDrive\Desktop\contextdrop\ctx.py" status
+python "C:\Users\armaa\OneDrive\Desktop\contextdrop\ctx.py" doctor
 ```
 
 If you installed the PATH launcher, the same commands become:
@@ -46,6 +48,7 @@ If you installed the PATH launcher, the same commands become:
 cd path\to\your-project
 ctx init
 ctx status
+ctx doctor
 ctx save
 ```
 
@@ -69,17 +72,28 @@ python ctx.py done 1
 python ctx.py parse
 python ctx.py watch
 python ctx.py report
+python ctx.py doctor
 ```
 
 When installed, replace `python ctx.py` with `ctx`.
 
-`save` is automatic by default. It writes `.ctx/handoff.md` from your current task board and brain files without asking questions.
+`save` is automatic by default. It writes `.ctx/handoff.md` from your current task board and brain files without asking questions. If the project uses Git, it includes only the first 8 changed files and a short diff stat to keep token use low.
+
+`load` is intentionally compact by default: small enough to paste into a new AI chat without dragging in the whole project.
 
 If you want to manually add session notes:
 
 ```powershell
 python ctx.py save --interactive
 ```
+
+Use `doctor` when something feels off:
+
+```powershell
+python ctx.py doctor
+```
+
+It checks Python, the launcher, Git availability, `.ctx/` files, and the shape of `tasks.json`.
 
 ## What Gets Created
 
@@ -119,6 +133,12 @@ Compile-check the package:
 
 ```powershell
 python -m compileall contextdrop
+```
+
+Run tests:
+
+```powershell
+python -m unittest discover -s tests
 ```
 
 Run without installing:

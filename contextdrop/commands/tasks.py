@@ -19,9 +19,20 @@ def load_tasks() -> dict:
     if not TASKS_FILE.exists():
         return copy.deepcopy(TASK_BOARD_TEMPLATE)
     try:
-        return json.loads(TASKS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
     except Exception:
         return copy.deepcopy(TASK_BOARD_TEMPLATE)
+    return normalize_tasks(data)
+
+
+def normalize_tasks(data: object) -> dict:
+    tasks = copy.deepcopy(TASK_BOARD_TEMPLATE)
+    if not isinstance(data, dict):
+        return tasks
+    for key in TASK_BOARD_TEMPLATE:
+        value = data.get(key, [])
+        tasks[key] = value if isinstance(value, list) else []
+    return tasks
 
 
 def save_tasks(tasks: dict) -> None:

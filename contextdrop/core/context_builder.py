@@ -38,73 +38,64 @@ This is critical. It lets the project brain stay updated automatically even if t
 
 def build_load_prompt(brain: str, handoff: str, tasks: dict) -> str:
     name = project_name()
-    stack = extract_section(brain, "Stack") or "see brain.md"
-    arch = extract_section(brain, "Architecture decisions") or "(none yet)"
-    env = extract_section(brain, "Environment") or "(none)"
-    conv = extract_section(brain, "Naming conventions") or "(none)"
+    stack = _clean_section(extract_section(brain, "Stack") or "see brain.md")
+    arch = _clean_section(extract_section(brain, "Architecture decisions") or "")
+    env = _clean_section(extract_section(brain, "Environment") or "")
+    conv = _clean_section(extract_section(brain, "Naming conventions") or "")
 
-    todo_list = "\n".join(f"  - {t['task']}" for t in tasks.get("todo", [])) or "  (none)"
-    done_list = "\n".join(f"  - {t['task']}" for t in tasks.get("done", [])[-5:]) or "  (none yet)"
-    in_prog = "\n".join(f"  - {t['task']}" for t in tasks.get("in_progress", [])) or "  (none)"
+    todo_list = _task_names(tasks.get("todo", []), limit=5) or "none"
+    done_list = _task_names(tasks.get("done", [])[-5:], limit=5) or "none"
+    in_prog = _task_names(tasks.get("in_progress", []), limit=3) or "none"
 
-    last_done = extract_section(handoff, "What was done this session") or "(first session)"
-    last_next = extract_section(handoff, "Next task for new agent") or "(see todo list)"
-    last_bugs = extract_section(handoff, "Known blockers") or "(none)"
+    last_done = _clean_section(extract_section(handoff, "What was done this session") or "first session", limit=900)
+    last_next = _clean_section(extract_section(handoff, "Next task for new agent") or "see todo list", limit=220)
+    last_bugs = _clean_section(extract_section(handoff, "Known blockers") or "none", limit=220)
     saved = extract_saved_timestamp(handoff)
-    last_saved = f" (saved {saved})" if saved else ""
+    meta = f"{name}{f' | saved {saved}' if saved else ''}"
 
-    # Text shape is intentionally preserved from the prototype so existing user
-    # handoff habits and downstream parsers keep working.
-    return f"""===========================================
-  CONTEXTDROP - PROJECT BRAIN for {name}
-===========================================
+    lines = [
+        f"CONTEXTDROP: {meta}",
+        f"Stack: {stack}",
+    ]
+    if arch:
+        lines.append(f"Decisions: {arch}")
+    if env:
+        lines.append(f"Env: {env}")
+    if conv:
+        lines.append(f"Conventions: {conv}")
+    lines.extend(
+        [
+            f"Last: {last_done}",
+            f"Bugs: {last_bugs}",
+            f"Doing: {in_prog}",
+            f"Todo: {todo_list}",
+            f"Done: {done_list}",
+            f"First: {last_next}",
+            "Reply update block: ---CTX-UPDATE--- done: ... | decision: ... | next: ... | bug: ... ---END-CTX-UPDATE---",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
-You are resuming work on an existing project. Read all of this before writing any code.
 
-## Project: {name}
+def _task_names(items: list, limit: int) -> str:
+    names = []
+    for item in items[:limit]:
+        task = item.get("task", item) if isinstance(item, dict) else item
+        names.append(str(task))
+    return "; ".join(names)
 
-## Stack
-{stack}
 
-## Architecture decisions
-{arch}
-
-## Environment & config
-{env}
-
-## Naming conventions
-{conv}
-
-## Last session summary{last_saved}
-What was built: {last_done}
-Known bugs/blockers: {last_bugs}
-
-## Task board
-In progress:
-{in_prog}
-
-TODO (do these next, in order):
-{todo_list}
-
-Recently done (do NOT redo these):
-{done_list}
-
-## Your first task
-{last_next}
-
-===========================================
-IMPORTANT: After each meaningful response, append this block:
-
----CTX-UPDATE---
-done: [what you just completed]
-decision: [any arch/tech choice made, or 'none']
-next: [what comes after this]
-bug: [any issue found, or 'none']
----END-CTX-UPDATE---
-
-This keeps the project brain updated automatically.
-===========================================
-"""
+def _clean_section(value: str, limit: int = 500) -> str:
+    lines = []
+    for raw in value.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("<!--") or line in {"-", "- ", "(none)", "(none yet)"}:
+            continue
+        lines.append(line)
+    compact = " ".join(lines).strip()
+    if len(compact) > limit:
+        return compact[: limit - 3].rstrip() + "..."
+    return compact
 
 
 def build_report_markdown(brain: str, handoff: str, tasks: dict) -> str:

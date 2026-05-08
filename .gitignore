@@ -16,3 +16,4 @@ venv/
 .ctx/
 .ctx/watch.log
 CONTEXT.md
+tests/_tmp/

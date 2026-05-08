@@ -11,6 +11,7 @@ import argparse
 from collections.abc import Sequence
 
 from contextdrop.commands import init as init_command
+from contextdrop.commands import doctor as doctor_command
 from contextdrop.commands import load as load_command
 from contextdrop.commands import parse as parse_command
 from contextdrop.commands import save as save_command
@@ -41,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Show the task board.")
     subparsers.add_parser("watch", help="Watch files and update the project brain.")
     subparsers.add_parser("parse", help="Read CTX-UPDATE blocks from stdin.")
+    subparsers.add_parser("doctor", help="Check ContextDrop setup and project health.")
 
     add_parser = subparsers.add_parser("add", help="Add a todo.")
     add_parser.add_argument("task_text", nargs="+", help="Task description.")
@@ -78,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         watch_command.run()
     elif args.command == "parse":
         parse_command.run()
+    elif args.command == "doctor":
+        doctor_command.run()
     else:
         parser.print_help()
 

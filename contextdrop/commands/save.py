@@ -8,6 +8,7 @@ from contextdrop.commands.tasks import load_tasks, now, save_tasks
 from contextdrop.config import ensure_ctx, project_name
 from contextdrop.constants import BRAIN_FILE, HANDOFF_FILE
 from contextdrop.core.summarizer import format_tasks_summary
+from contextdrop.services.git import changed_files, diff_stat
 from contextdrop.services.parser import extract_section
 from contextdrop.utils.formatting import B, C, X, ok
 
@@ -24,11 +25,13 @@ def run(interactive: bool = False) -> None:
     save_tasks(tasks)
 
     brain = BRAIN_FILE.read_text(encoding="utf-8") if BRAIN_FILE.exists() else ""
-    done_items = tasks.get("done", [])[-5:]
+    done_items = tasks.get("done", [])[-3:]
     todo_items = tasks.get("todo", [])
     blocked_items = tasks.get("blocked", [])
+    changed = changed_files()
+    stat = diff_stat()
 
-    what_done = _task_list(done_items) or "Saved current project context snapshot."
+    what_done = _build_auto_summary(done_items, changed, stat)
     decisions = extract_section(brain, "Architecture decisions") or "(none)"
     blockers = _task_list(blocked_items) or "(none)"
     next_task = _first_task(todo_items) or "(not specified)"
@@ -110,3 +113,16 @@ def _first_task(items: list) -> str:
         return ""
     item = items[0]
     return item.get("task", item) if isinstance(item, dict) else item
+
+
+def _build_auto_summary(done_items: list, changed: list[str], stat: str) -> str:
+    sections = []
+    done = _task_list(done_items)
+    if done:
+        sections.append(done)
+    if changed:
+        files = "\n".join(f"- {path}" for path in changed)
+        sections.append(f"Changed files:\n{files}")
+    if stat:
+        sections.append(f"Diff stat:\n```text\n{stat}\n```")
+    return "\n\n".join(sections) or "Saved current project context snapshot."
