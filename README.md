@@ -102,12 +102,24 @@ Running `init` inside a project creates:
 ```text
 .ctx/
   brain.md
+  config.json
   tasks.json
   handoff.md
   system_prompt.md
 ```
 
 Commit `.ctx/brain.md`, `.ctx/tasks.json`, `.ctx/handoff.md`, and `.ctx/system_prompt.md` if you want the project brain to travel with the code. `.ctx/watch.log` is ignored.
+
+`config.json` controls token and watch behavior:
+
+```json
+{
+  "max_changed_files": 8,
+  "max_diff_stat_lines": 8,
+  "max_file_tree_entries": 60,
+  "watch_interval_seconds": 3
+}
+```
 
 ## Project Layout
 
@@ -140,6 +152,14 @@ Run tests:
 ```powershell
 python -m unittest discover -s tests
 ```
+
+Run the full local check:
+
+```powershell
+.\scripts\check.ps1
+```
+
+GitHub Actions also runs the compile, test, and CLI smoke checks on Windows and Ubuntu for Python 3.9 and 3.12.
 
 Run without installing:
 

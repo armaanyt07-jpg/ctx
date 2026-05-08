@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from contextdrop.config import project_name
-from contextdrop.constants import BRAIN_FILE, CTX_DIR, HANDOFF_FILE, SYSTEM_PROMPT_FILE, TASKS_FILE
+from contextdrop.constants import BRAIN_FILE, CONFIG_FILE, CTX_DIR, DEFAULT_CONFIG, HANDOFF_FILE, SYSTEM_PROMPT_FILE, TASKS_FILE
 from contextdrop.core.context_builder import build_system_prompt
 from contextdrop.services.filesystem import get_file_tree
 from contextdrop.services.parser import extract_section
@@ -106,6 +106,12 @@ _Last updated: {now()}_
         ok(f"Created {HANDOFF_FILE}")
     else:
         ok(f"{HANDOFF_FILE} exists - skipped")
+
+    if not CONFIG_FILE.exists():
+        CONFIG_FILE.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
+        ok(f"Created {CONFIG_FILE}")
+    else:
+        ok(f"{CONFIG_FILE} exists - skipped")
 
     SYSTEM_PROMPT_FILE.write_text(build_system_prompt(name), encoding="utf-8")
     ok(f"Created {SYSTEM_PROMPT_FILE}")

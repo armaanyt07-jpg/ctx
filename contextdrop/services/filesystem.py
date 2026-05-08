@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from contextdrop.constants import WATCH_EXTENSIONS, WATCH_IGNORE
+from contextdrop.config import load_config
 
 
 def get_file_tree(max_depth: int = 2) -> str:
+    config = load_config()
+    ignore = set(config["ignore"])
+    max_entries = int(config["max_file_tree_entries"])
     lines: list[str] = []
 
     def walk(path: Path, depth: int) -> None:
@@ -19,7 +22,7 @@ def get_file_tree(max_depth: int = 2) -> str:
             return
 
         for entry in entries:
-            if entry.name in WATCH_IGNORE or entry.name.startswith("."):
+            if entry.name in ignore or entry.name.startswith("."):
                 continue
             indent = "  " * depth
             if entry.is_dir():
@@ -29,15 +32,18 @@ def get_file_tree(max_depth: int = 2) -> str:
                 lines.append(f"{indent}{entry.name}")
 
     walk(Path("."), 0)
-    return "\n".join(lines[:60]) or "(empty project)"
+    return "\n".join(lines[:max_entries]) or "(empty project)"
 
 
 def get_watch_snapshot() -> dict[str, float]:
+    config = load_config()
+    ignore = set(config["ignore"])
+    extensions = set(config["watch_extensions"])
     snap: dict[str, float] = {}
     for path in Path(".").rglob("*"):
-        if any(part in WATCH_IGNORE for part in path.parts):
+        if any(part in ignore for part in path.parts):
             continue
-        if not path.is_file() or path.suffix not in WATCH_EXTENSIONS:
+        if not path.is_file() or path.suffix not in extensions:
             continue
         try:
             snap[path.as_posix()] = path.stat().st_mtime

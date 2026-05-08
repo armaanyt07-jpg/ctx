@@ -5,6 +5,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+from contextdrop.config import load_config
+
 
 def git_available() -> bool:
     return shutil.which("git") is not None
@@ -18,6 +20,7 @@ def is_git_repo() -> bool:
 
 
 def changed_files(limit: int = 8) -> list[str]:
+    limit = int(load_config()["max_changed_files"]) if limit == 8 else limit
     if not is_git_repo():
         return []
     result = _run_git(["status", "--short"])
@@ -38,6 +41,7 @@ def changed_files(limit: int = 8) -> list[str]:
 
 
 def diff_stat(limit: int = 8) -> str:
+    limit = int(load_config()["max_diff_stat_lines"]) if limit == 8 else limit
     if not is_git_repo():
         return ""
     result = _run_git(["diff", "--stat"])

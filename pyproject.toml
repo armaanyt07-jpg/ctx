@@ -4,11 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "contextdrop"
-version = "0.1.0"
+version = "0.2.0"
 description = "A small CLI project brain for agent handoffs."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = []
+keywords = ["cli", "context", "agents", "handoff", "productivity"]
+
+[project.urls]
+Homepage = "https://github.com/armaanyt07-jpg/ctx"
+Repository = "https://github.com/armaanyt07-jpg/ctx"
+Issues = "https://github.com/armaanyt07-jpg/ctx/issues"
 
 [project.scripts]
 ctx = "contextdrop.cli:main"

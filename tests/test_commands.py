@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from contextdrop.cli import main
+from contextdrop.config import load_config
 from contextdrop.commands.tasks import load_tasks, normalize_tasks
 
 
@@ -18,6 +19,7 @@ class CommandTests(unittest.TestCase):
         with temp_cwd() as workdir:
             main(["init"])
             self.assertTrue((workdir / ".ctx" / "brain.md").exists())
+            self.assertTrue((workdir / ".ctx" / "config.json").exists())
             self.assertTrue((workdir / ".ctx" / "tasks.json").exists())
 
             main(["add", "write", "tests"])
@@ -68,6 +70,28 @@ bug: none
         with temp_cwd():
             with self.assertRaises(SystemExit):
                 main(["doctor"])
+
+    def test_config_controls_defaults_and_normalizes_bad_values(self) -> None:
+        with temp_cwd() as workdir:
+            main(["init"])
+            config_path = workdir / ".ctx" / "config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config["max_changed_files"], 8)
+
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "max_changed_files": "2",
+                        "watch_interval_seconds": 0,
+                        "ignore": "bad",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_config()
+            self.assertEqual(loaded["max_changed_files"], 2)
+            self.assertEqual(loaded["watch_interval_seconds"], 3)
+            self.assertIsInstance(loaded["ignore"], list)
 
 
 @contextlib.contextmanager

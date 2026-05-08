@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from contextdrop.commands.tasks import load_tasks, now, save_tasks
-from contextdrop.config import ensure_ctx
+from contextdrop.config import ensure_ctx, load_config
 from contextdrop.constants import WATCH_LOG
 from contextdrop.services.filesystem import get_watch_snapshot
 from contextdrop.utils.formatting import B, D, G, R, X, Y
@@ -15,12 +15,13 @@ def run() -> None:
     ensure_ctx()
     print(f"{B}ctx watch{X} - watching for file changes (Ctrl+C to stop)\n")
 
+    interval = load_config()["watch_interval_seconds"]
     prev = get_watch_snapshot()
     tasks = load_tasks()
 
     try:
         while True:
-            time.sleep(3)
+            time.sleep(interval)
             curr = get_watch_snapshot()
 
             new_files = [p for p in curr if p not in prev]
