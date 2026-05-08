@@ -1,0 +1,672 @@
+#!/usr/bin/env python3
+"""
+ctx — ContextDrop CLI
+Your project's brain. Never explain your codebase to an agent again.
+
+Commands:
+  ctx init      — set up .ctx/ in your project
+  ctx save      — save current session state
+  ctx load      — print the handoff prompt for a new agent
+  ctx status    — show what's tracked
+  ctx done <n>  — mark a todo as done
+  ctx add <t>   — add a new todo
+  ctx watch     — watch files and auto-update brain (background)
+"""
+
+import sys
+import os
+import json
+import datetime
+import subprocess
+import time
+import hashlib
+
+CTX_DIR = ".ctx"
+BRAIN_FILE = os.path.join(CTX_DIR, "brain.md")
+TASKS_FILE = os.path.join(CTX_DIR, "tasks.json")
+HANDOFF_FILE = os.path.join(CTX_DIR, "handoff.md")
+SYSTEM_PROMPT_FILE = os.path.join(CTX_DIR, "system_prompt.md")
+WATCH_LOG = os.path.join(CTX_DIR, "watch.log")
+
+# ─────────────────────────────────────────────
+# ANSI colors
+# ─────────────────────────────────────────────
+G = "\033[32m"   # green
+Y = "\033[33m"   # yellow
+C = "\033[36m"   # cyan
+R = "\033[31m"   # red
+B = "\033[1m"    # bold
+D = "\033[2m"    # dim
+X = "\033[0m"    # reset
+
+
+def ok(msg):   print(f"{G}✓{X} {msg}")
+def warn(msg): print(f"{Y}!{X} {msg}")
+def err(msg):  print(f"{R}✗{X} {msg}"); sys.exit(1)
+def head(msg): print(f"\n{B}{C}{msg}{X}\n")
+
+
+def ensure_ctx():
+    if not os.path.isdir(CTX_DIR):
+        err("No .ctx/ found. Run: ctx init")
+
+
+# ─────────────────────────────────────────────
+# INIT
+# ─────────────────────────────────────────────
+def cmd_init():
+    if os.path.isdir(CTX_DIR):
+        warn(".ctx/ already exists. Re-initializing metadata only.")
+    os.makedirs(CTX_DIR, exist_ok=True)
+
+    project_name = os.path.basename(os.getcwd())
+
+    # Detect stack
+    stack_hints = []
+    if os.path.exists("package.json"):
+        try:
+            pkg = json.load(open("package.json"))
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            if "react" in deps:      stack_hints.append("React")
+            if "next" in deps:       stack_hints.append("Next.js")
+            if "vue" in deps:        stack_hints.append("Vue")
+            if "express" in deps:    stack_hints.append("Express")
+            if "fastify" in deps:    stack_hints.append("Fastify")
+            if "typescript" in deps: stack_hints.append("TypeScript")
+            if not stack_hints:      stack_hints.append("Node.js")
+        except Exception:
+            stack_hints.append("Node.js")
+    if os.path.exists("requirements.txt") or os.path.exists("pyproject.toml"):
+        stack_hints.append("Python")
+    if os.path.exists("go.mod"):
+        stack_hints.append("Go")
+    if os.path.exists("Cargo.toml"):
+        stack_hints.append("Rust")
+    if not stack_hints:
+        stack_hints.append("Unknown — fill in manually")
+
+    stack_str = ", ".join(stack_hints)
+
+    # Build file tree (top 2 levels, skip node_modules/.git/etc)
+    tree = _get_file_tree()
+
+    # Create brain.md
+    if not os.path.exists(BRAIN_FILE):
+        brain = f"""# Project: {project_name}
+_Last updated: {_now()}_
+
+## Stack
+{stack_str}
+
+## Architecture decisions
+<!-- Key choices made: DB, auth method, patterns, why you chose X over Y -->
+- 
+
+## Key files
+{tree}
+
+## Environment / config
+<!-- Important env vars, ports, external services -->
+- 
+
+## Naming conventions
+<!-- How you name things: camelCase? snake_case? file structure? -->
+- 
+"""
+        open(BRAIN_FILE, "w").write(brain)
+        ok(f"Created {BRAIN_FILE}")
+    else:
+        ok(f"{BRAIN_FILE} exists — skipped")
+
+    # Create tasks.json
+    if not os.path.exists(TASKS_FILE):
+        tasks = {
+            "done": [],
+            "in_progress": [],
+            "todo": [],
+            "blocked": []
+        }
+        json.dump(tasks, open(TASKS_FILE, "w"), indent=2)
+        ok(f"Created {TASKS_FILE}")
+    else:
+        ok(f"{TASKS_FILE} exists — skipped")
+
+    # Create handoff.md
+    if not os.path.exists(HANDOFF_FILE):
+        open(HANDOFF_FILE, "w").write(f"# Handoff — {project_name}\n\n_No sessions saved yet. Run: ctx save_\n")
+        ok(f"Created {HANDOFF_FILE}")
+    else:
+        ok(f"{HANDOFF_FILE} exists — skipped")
+
+    # Create the system prompt
+    _write_system_prompt(project_name)
+    ok(f"Created {SYSTEM_PROMPT_FILE}")
+
+    # .gitignore suggestion
+    gitignore_path = ".gitignore"
+    note = "# ContextDrop watch log\n.ctx/watch.log\n"
+    if os.path.exists(gitignore_path):
+        content = open(gitignore_path).read()
+        if "watch.log" not in content:
+            open(gitignore_path, "a").write("\n" + note)
+            ok("Updated .gitignore (watch.log excluded, brain tracked)")
+    else:
+        open(gitignore_path, "w").write(note)
+        ok("Created .gitignore")
+
+    print(f"""
+{B}ContextDrop initialized for {project_name}{X}
+
+{D}Next steps:{X}
+  1. Edit {BRAIN_FILE} — fill in your stack + decisions
+  2. Use the system prompt in {SYSTEM_PROMPT_FILE} at the start of every agent session
+  3. Run {B}ctx save{X} at the end of each session (or mid-session)
+  4. Run {B}ctx load{X} to get the handoff prompt for a new agent
+
+{D}Auto-save tip:{X}
+  Paste the system prompt into your agent — it will auto-append CTX-UPDATE
+  blocks that ctx save will pick up automatically.
+""")
+
+
+# ─────────────────────────────────────────────
+# SAVE
+# ─────────────────────────────────────────────
+def cmd_save():
+    ensure_ctx()
+
+    print(f"""
+{B}ctx save{X} — saving session state
+
+Answer these questions (press Enter to skip any):
+""")
+
+    what_done = input(f"  {C}What was completed this session?{X}\n  > ").strip()
+    decisions = input(f"\n  {C}Any architecture/tech decisions made?{X}\n  > ").strip()
+    blockers  = input(f"\n  {C}Any blockers or known bugs?{X}\n  > ").strip()
+    next_task = input(f"\n  {C}What should the next agent do first?{X}\n  > ").strip()
+
+    now = _now()
+
+    # Update tasks.json
+    tasks = _load_tasks()
+    if what_done:
+        tasks["done"].append({"task": what_done, "completed": now})
+    if next_task:
+        tasks["todo"].insert(0, {"task": next_task, "added": now, "priority": "high"})
+    _save_tasks(tasks)
+
+    # Update handoff.md
+    handoff = f"""# Handoff — {os.path.basename(os.getcwd())}
+_Saved: {now}_
+
+## What was done this session
+{what_done or '(not recorded)'}
+
+## Decisions made
+{decisions or '(none)'}
+
+## Known blockers / bugs
+{blockers or '(none)'}
+
+## Next task for new agent
+{next_task or '(not specified)'}
+
+## Task board
+{_format_tasks_summary(tasks)}
+"""
+    open(HANDOFF_FILE, "w").write(handoff)
+
+    # Update brain.md last-updated timestamp
+    brain = open(BRAIN_FILE).read()
+    import re
+    brain = re.sub(r"_Last updated:.*?_", f"_Last updated: {now}_", brain)
+    open(BRAIN_FILE, "w").write(brain)
+
+    ok("Session saved.")
+    ok(f"Handoff written to {HANDOFF_FILE}")
+    print(f"\n  Run {B}ctx load{X} to get the prompt for your next agent.\n")
+
+
+# ─────────────────────────────────────────────
+# LOAD  — the money command
+# ─────────────────────────────────────────────
+def cmd_load():
+    ensure_ctx()
+
+    brain   = open(BRAIN_FILE).read() if os.path.exists(BRAIN_FILE) else ""
+    handoff = open(HANDOFF_FILE).read() if os.path.exists(HANDOFF_FILE) else ""
+    tasks   = _load_tasks()
+
+    # Strip markdown headers and compress
+    project = os.path.basename(os.getcwd())
+    stack   = _extract_section(brain, "Stack") or "see brain.md"
+    arch    = _extract_section(brain, "Architecture decisions") or "(none yet)"
+    env     = _extract_section(brain, "Environment") or "(none)"
+    conv    = _extract_section(brain, "Naming conventions") or "(none)"
+
+    todo_list = "\n".join(
+        f"  - {t['task']}" for t in tasks.get("todo", [])
+    ) or "  (none)"
+
+    done_list = "\n".join(
+        f"  - {t['task']}" for t in tasks.get("done", [])[-5:]  # last 5
+    ) or "  (none yet)"
+
+    in_prog = "\n".join(
+        f"  - {t['task']}" for t in tasks.get("in_progress", [])
+    ) or "  (none)"
+
+    # Extract last session info from handoff
+    last_done  = _extract_section(handoff, "What was done this session") or "(first session)"
+    last_next  = _extract_section(handoff, "Next task for new agent") or "(see todo list)"
+    last_bugs  = _extract_section(handoff, "Known blockers") or "(none)"
+    last_saved = ""
+    import re
+    m = re.search(r"_Saved: (.+?)_", handoff)
+    if m: last_saved = f" (saved {m.group(1)})"
+
+    prompt = f"""═══════════════════════════════════════════
+  CONTEXTDROP — PROJECT BRAIN for {project}
+═══════════════════════════════════════════
+
+You are resuming work on an existing project. Read all of this before writing any code.
+
+## Project: {project}
+
+## Stack
+{stack}
+
+## Architecture decisions
+{arch}
+
+## Environment & config
+{env}
+
+## Naming conventions
+{conv}
+
+## Last session summary{last_saved}
+What was built: {last_done}
+Known bugs/blockers: {last_bugs}
+
+## Task board
+In progress:
+{in_prog}
+
+TODO (do these next, in order):
+{todo_list}
+
+Recently done (do NOT redo these):
+{done_list}
+
+## Your first task
+{last_next}
+
+═══════════════════════════════════════════
+IMPORTANT: After each meaningful response, append this block:
+
+---CTX-UPDATE---
+done: [what you just completed]
+decision: [any arch/tech choice made, or 'none']
+next: [what comes after this]
+bug: [any issue found, or 'none']
+---END-CTX-UPDATE---
+
+This keeps the project brain updated automatically.
+═══════════════════════════════════════════
+"""
+
+    head("Paste this into your new agent:")
+    print(prompt)
+
+    # Also copy to clipboard if possible
+    try:
+        subprocess.run(["pbcopy"], input=prompt.encode(), check=True)
+        ok("Also copied to clipboard!")
+    except Exception:
+        try:
+            subprocess.run(["xclip", "-selection", "clipboard"], input=prompt.encode(), check=True)
+            ok("Also copied to clipboard!")
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────
+# STATUS
+# ─────────────────────────────────────────────
+def cmd_status():
+    ensure_ctx()
+    tasks = _load_tasks()
+
+    head(f"ctx status — {os.path.basename(os.getcwd())}")
+
+    sections = [
+        ("In progress", "in_progress", C),
+        ("TODO",        "todo",        Y),
+        ("Done",        "done",        G),
+        ("Blocked",     "blocked",     R),
+    ]
+
+    for label, key, color in sections:
+        items = tasks.get(key, [])
+        print(f"{B}{color}{label}{X} ({len(items)})")
+        for item in items[-8:]:
+            t = item.get("task", item) if isinstance(item, dict) else item
+            print(f"  {D}·{X} {t}")
+        print()
+
+    # Show last save time
+    if os.path.exists(HANDOFF_FILE):
+        import re
+        handoff = open(HANDOFF_FILE).read()
+        m = re.search(r"_Saved: (.+?)_", handoff)
+        if m:
+            print(f"{D}Last saved: {m.group(1)}{X}")
+
+    print(f"\n{D}Files: {BRAIN_FILE} · {TASKS_FILE} · {HANDOFF_FILE}{X}\n")
+
+
+# ─────────────────────────────────────────────
+# ADD / DONE
+# ─────────────────────────────────────────────
+def cmd_add(task_text):
+    ensure_ctx()
+    tasks = _load_tasks()
+    tasks.setdefault("todo", []).append({"task": task_text, "added": _now()})
+    _save_tasks(tasks)
+    ok(f"Added to TODO: {task_text}")
+
+
+def cmd_done(identifier):
+    ensure_ctx()
+    tasks = _load_tasks()
+    todo = tasks.get("todo", [])
+
+    # Try index first
+    try:
+        idx = int(identifier) - 1
+        if 0 <= idx < len(todo):
+            item = todo.pop(idx)
+            item["completed"] = _now()
+            tasks.setdefault("done", []).append(item)
+            _save_tasks(tasks)
+            t = item.get("task", item)
+            ok(f"Marked done: {t}")
+            return
+    except ValueError:
+        pass
+
+    # Try fuzzy text match
+    for i, item in enumerate(todo):
+        t = item.get("task", item) if isinstance(item, dict) else item
+        if identifier.lower() in t.lower():
+            item = todo.pop(i)
+            if isinstance(item, dict):
+                item["completed"] = _now()
+            else:
+                item = {"task": item, "completed": _now()}
+            tasks.setdefault("done", []).append(item)
+            _save_tasks(tasks)
+            ok(f"Marked done: {item.get('task', item)}")
+            return
+
+    err(f"Couldn't find task matching: {identifier}")
+
+
+# ─────────────────────────────────────────────
+# WATCH — file system auto-tracker
+# ─────────────────────────────────────────────
+def cmd_watch():
+    ensure_ctx()
+    print(f"{B}ctx watch{X} — watching for file changes (Ctrl+C to stop)\n")
+
+    IGNORE = {".ctx", ".git", "node_modules", "__pycache__", ".venv",
+              "venv", "dist", "build", ".next", ".DS_Store"}
+    EXT    = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs",
+              ".java", ".rb", ".css", ".html", ".json", ".md", ".sql", ".env"}
+
+    def get_snapshot():
+        snap = {}
+        for root, dirs, files in os.walk("."):
+            dirs[:] = [d for d in dirs if d not in IGNORE]
+            for f in files:
+                _, ext = os.path.splitext(f)
+                if ext in EXT:
+                    path = os.path.join(root, f)
+                    try:
+                        snap[path] = os.path.getmtime(path)
+                    except Exception:
+                        pass
+        return snap
+
+    prev = get_snapshot()
+    tasks = _load_tasks()
+
+    try:
+        while True:
+            time.sleep(3)
+            curr = get_snapshot()
+
+            new_files     = [p for p in curr if p not in prev]
+            changed_files = [p for p in curr if p in prev and curr[p] != prev[p]]
+            deleted_files = [p for p in prev if p not in curr]
+
+            if new_files or changed_files or deleted_files:
+                now = _now()
+                log_lines = []
+
+                for f in new_files:
+                    msg = f"[{now}] CREATED: {f}"
+                    print(f"  {G}+{X} {f}")
+                    log_lines.append(msg)
+                    tasks.setdefault("done", []).append({
+                        "task": f"Created {f}",
+                        "completed": now,
+                        "auto": True
+                    })
+
+                for f in changed_files:
+                    msg = f"[{now}] MODIFIED: {f}"
+                    print(f"  {Y}~{X} {f}")
+                    log_lines.append(msg)
+
+                for f in deleted_files:
+                    msg = f"[{now}] DELETED: {f}"
+                    print(f"  {R}-{X} {f}")
+                    log_lines.append(msg)
+
+                # Write to watch log
+                with open(WATCH_LOG, "a") as wl:
+                    wl.write("\n".join(log_lines) + "\n")
+
+                # Update tasks
+                _save_tasks(tasks)
+                prev = curr
+
+    except KeyboardInterrupt:
+        print(f"\n{D}ctx watch stopped.{X}")
+
+
+# ─────────────────────────────────────────────
+# PARSE — extract CTX-UPDATE blocks from agent output
+# ─────────────────────────────────────────────
+def cmd_parse():
+    """Read agent output from stdin, extract CTX-UPDATE blocks, apply them."""
+    ensure_ctx()
+    import re
+
+    text = sys.stdin.read()
+    pattern = r"---CTX-UPDATE---\s*(.*?)\s*---END-CTX-UPDATE---"
+    blocks = re.findall(pattern, text, re.DOTALL)
+
+    if not blocks:
+        warn("No CTX-UPDATE blocks found in input.")
+        return
+
+    tasks = _load_tasks()
+    now = _now()
+    count = 0
+
+    for block in blocks:
+        lines = block.strip().splitlines()
+        data = {}
+        for line in lines:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                data[k.strip().lower()] = v.strip()
+
+        if data.get("done") and data["done"] not in ("none", ""):
+            tasks.setdefault("done", []).append({"task": data["done"], "completed": now, "auto": True})
+
+        if data.get("next") and data["next"] not in ("none", ""):
+            tasks.setdefault("todo", []).insert(0, {"task": data["next"], "added": now, "priority": "high"})
+
+        if data.get("decision") and data["decision"] not in ("none", ""):
+            # Append to brain.md decisions section
+            brain = open(BRAIN_FILE).read()
+            decision_line = f"- [{now}] {data['decision']}\n"
+            brain = brain.replace("## Architecture decisions\n", f"## Architecture decisions\n{decision_line}")
+            open(BRAIN_FILE, "w").write(brain)
+
+        count += 1
+
+    _save_tasks(tasks)
+    ok(f"Applied {count} CTX-UPDATE block(s) from agent output.")
+
+
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+def _now():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def _load_tasks():
+    if not os.path.exists(TASKS_FILE):
+        return {"done": [], "in_progress": [], "todo": [], "blocked": []}
+    try:
+        return json.load(open(TASKS_FILE))
+    except Exception:
+        return {"done": [], "in_progress": [], "todo": [], "blocked": []}
+
+
+def _save_tasks(tasks):
+    json.dump(tasks, open(TASKS_FILE, "w"), indent=2)
+
+
+def _format_tasks_summary(tasks):
+    lines = []
+    for key in ["in_progress", "todo", "done", "blocked"]:
+        items = tasks.get(key, [])
+        if items:
+            lines.append(f"{key.replace('_',' ').title()} ({len(items)}):")
+            for item in items[-5:]:
+                t = item.get("task", item) if isinstance(item, dict) else item
+                lines.append(f"  - {t}")
+    return "\n".join(lines) or "(empty)"
+
+
+def _extract_section(text, heading):
+    """Extract content under a markdown ## heading."""
+    import re
+    pattern = rf"## {re.escape(heading)}\n(.*?)(?=\n## |\Z)"
+    m = re.search(pattern, text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _get_file_tree(max_depth=2):
+    IGNORE = {".ctx", ".git", "node_modules", "__pycache__", ".venv",
+              "venv", "dist", "build", ".next", ".DS_Store"}
+    lines = []
+
+    def walk(path, depth):
+        if depth > max_depth:
+            return
+        try:
+            entries = sorted(os.listdir(path))
+        except PermissionError:
+            return
+        for entry in entries:
+            if entry in IGNORE or entry.startswith("."):
+                continue
+            full = os.path.join(path, entry)
+            indent = "  " * depth
+            if os.path.isdir(full):
+                lines.append(f"{indent}{entry}/")
+                walk(full, depth + 1)
+            else:
+                lines.append(f"{indent}{entry}")
+
+    walk(".", 0)
+    return "\n".join(lines[:60]) or "(empty project)"
+
+
+def _write_system_prompt(project_name):
+    prompt = f"""# ContextDrop System Prompt — paste this at the start of every agent session
+
+---
+
+You are working on the project: **{project_name}**
+
+The project brain is stored in `.ctx/`. Before doing anything:
+1. Read `.ctx/brain.md` for stack, decisions, and conventions
+2. Read `.ctx/handoff.md` for what was last done and what's next
+3. Read `.ctx/tasks.json` for the full task board
+
+After **every meaningful response** (writing code, making a decision, completing a task), append this block at the very end of your reply:
+
+---CTX-UPDATE---
+done: [what you just completed, or 'none']
+decision: [any architecture/tech choice made, or 'none']
+next: [what should happen next]
+bug: [any issue discovered, or 'none']
+---END-CTX-UPDATE---
+
+This is critical. It lets the project brain stay updated automatically even if this session ends unexpectedly.
+
+---
+"""
+    open(SYSTEM_PROMPT_FILE, "w").write(prompt)
+
+
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+def main():
+    args = sys.argv[1:]
+
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return
+
+    cmd = args[0]
+
+    if cmd == "init":
+        cmd_init()
+    elif cmd == "save":
+        cmd_save()
+    elif cmd == "load":
+        cmd_load()
+    elif cmd == "status":
+        cmd_status()
+    elif cmd == "watch":
+        cmd_watch()
+    elif cmd == "parse":
+        cmd_parse()
+    elif cmd == "add":
+        if len(args) < 2:
+            err("Usage: ctx add <task description>")
+        cmd_add(" ".join(args[1:]))
+    elif cmd == "done":
+        if len(args) < 2:
+            err("Usage: ctx done <task number or keyword>")
+        cmd_done(args[1])
+    else:
+        err(f"Unknown command: {cmd}\nRun ctx --help for usage.")
+
+
+if __name__ == "__main__":
+    main()
