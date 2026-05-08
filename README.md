@@ -1,189 +1,134 @@
 # ContextDrop
 
-**Your project's brain. Never explain your codebase to an agent again.**
+ContextDrop is a tiny CLI that creates a `.ctx/` folder in any project and keeps a simple project brain there: decisions, tasks, handoff notes, and a reusable prompt for the next AI session.
 
-When a free-tier AI agent hits its token limit, all context dies. ContextDrop fixes that by keeping a living `.ctx/` folder in your project — stack decisions, task board, file tree, last session summary — and generating a ready-to-paste handoff prompt for the next agent.
+The simplest way to use it does **not** require installation.
 
----
+## Quick Start
 
-## Install
+From the `contextdrop` folder:
 
-```bash
-git clone <this repo>
-cd contextdrop
-bash install.sh
+```powershell
+python ctx.py --help
 ```
 
-Or just drop the `ctx` file anywhere and run it with `python3 ctx`.
-KO
-Requires: **Python 3.6+** (no dependencies, no pip install)
+Or on Windows:
 
----
+```powershell
+.\ctx.cmd --help
+```
 
-## Usage
+To make `ctx` work from anywhere, run this once:
 
-### 1. Initialize a project
+```powershell
+cd "C:\Users\armaa\OneDrive\Desktop\contextdrop"
+.\install.ps1
+```
 
-```bash
-cd my-project
+Then close and reopen PowerShell:
+
+```powershell
+ctx --help
+ctx save
+```
+
+Use it inside another project by passing the full path to `ctx.py`:
+
+```powershell
+cd path\to\your-project
+python "C:\Users\armaa\OneDrive\Desktop\contextdrop\ctx.py" init
+python "C:\Users\armaa\OneDrive\Desktop\contextdrop\ctx.py" status
+```
+
+If you installed the PATH launcher, the same commands become:
+
+```powershell
+cd path\to\your-project
 ctx init
-```
-
-This creates `.ctx/` with:
-- `brain.md` — stack, decisions, file tree, conventions
-- `tasks.json` — todo / in-progress / done / blocked
-- `handoff.md` — last session summary
-- `system_prompt.md` — paste this into every agent session
-
-Auto-detects your stack (Node, Python, Go, Rust) from project files.
-
----
-
-### 2. Paste the system prompt into your agent
-
-Open `.ctx/system_prompt.md` and paste it at the **start** of every new agent conversation. This tells the agent to:
-- Read the brain files before writing code
-- Append a `CTX-UPDATE` block after every meaningful response
-
-This means context saves **automatically on every reply** — not just when you remember to.
-
----
-
-### 3. Save a session manually
-
-```bash
-ctx save
-```
-
-Asks you 4 quick questions:
-- What was completed?
-- Any decisions made?
-- Any blockers?
-- What should the next agent do first?
-
-Updates `tasks.json` and writes a clean `handoff.md`.
-
----
-
-### 4. Load context for a new agent
-
-```bash
-ctx load
-```
-
-Prints (and copies to clipboard) a compressed handoff prompt — all brain info under ~500 tokens. Paste it into your new agent window.
-
-**That's it. The new agent knows everything.**
-
----
-
-### 5. Manage tasks
-
-```bash
-ctx add "build the login page"        # add a todo
-ctx done 1                            # mark todo #1 done
-ctx done "login"                      # fuzzy match
-ctx status                            # show full task board
-```
-
----
-
-### 6. Auto-parse agent CTX-UPDATE blocks
-
-When your agent appends `CTX-UPDATE` blocks (because you used the system prompt), pipe the output through:
-
-```bash
-cat agent_output.txt | ctx parse
-```
-
-Or if you're using a wrapper/script that captures output:
-
-```bash
-my_agent_runner | ctx parse
-```
-
-This automatically:
-- Marks tasks done
-- Adds next tasks to todo
-- Appends decisions to `brain.md`
-
----
-
-### 7. Watch files (passive auto-track)
-
-```bash
-ctx watch
-```
-
-Runs in the background. Detects every file create/modify/delete and logs it to `.ctx/watch.log` and `tasks.json`. Gives you a full audit trail of what was built, even if the agent never ran `ctx save`.
-
-Run it in a separate terminal while your agent session is active.
-
----
-
-## The CTX-UPDATE format
-
-When you use the system prompt, your agent will end responses like this:
-
-```
----CTX-UPDATE---
-done: Built Express routes for /todos CRUD
-decision: Using raw SQL instead of ORM for simplicity
-next: Build React frontend, connect to API on port 3000
-bug: none
----END-CTX-UPDATE---
-```
-
-`ctx parse` reads these and updates the brain automatically.
-
----
-
-## File structure
-
-```
-your-project/
-  .ctx/
-    brain.md          ← stack, decisions, file tree, conventions
-    tasks.json        ← todo / in-progress / done / blocked
-    handoff.md        ← last session summary + next task
-    system_prompt.md  ← paste into every agent
-    watch.log         ← file change audit trail (gitignored)
-```
-
-Commit `.ctx/` to git (except `watch.log`). Your project brain travels with the code.
-
----
-
-## Example workflow
-
-```bash
-# Day 1 — start project
-cd my-todo-app
-ctx init
-# paste .ctx/system_prompt.md into Claude
-# ... build auth + DB with agent ...
-ctx save
-# → "built Express server + JWT auth, next: React frontend"
-
-# Day 2 — new agent, fresh window
-ctx load
-# → copies handoff prompt to clipboard
-# paste into new Claude window
-# agent immediately knows the full project state
-# ... build React frontend ...
-ctx save
-
-# Any time — check progress
 ctx status
+ctx save
 ```
 
----
+If you want the shorter `ctx` command later:
 
-## Why not Graphify?
+```powershell
+cd "C:\Users\armaa\OneDrive\Desktop\contextdrop"
+python -m pip install -e .
+ctx --help
+```
 
-Graphify stores project structure as a graph you have to manually maintain. ContextDrop is:
-- **Auto-updating** — via CTX-UPDATE blocks in every agent reply
-- **Token-compressed** — `ctx load` outputs <500 tokens
-- **Tool-agnostic** — works with Claude, Cursor, GPT-4, anything
-- **Zero dependencies** — one Python file, runs anywhere
-- **Git-native** — brain lives in your repo, versioned with your code
+## Commands
+
+```powershell
+python ctx.py init
+python ctx.py save
+python ctx.py load
+python ctx.py status
+python ctx.py add "build the login page"
+python ctx.py done 1
+python ctx.py parse
+python ctx.py watch
+python ctx.py report
+```
+
+When installed, replace `python ctx.py` with `ctx`.
+
+`save` is automatic by default. It writes `.ctx/handoff.md` from your current task board and brain files without asking questions.
+
+If you want to manually add session notes:
+
+```powershell
+python ctx.py save --interactive
+```
+
+## What Gets Created
+
+Running `init` inside a project creates:
+
+```text
+.ctx/
+  brain.md
+  tasks.json
+  handoff.md
+  system_prompt.md
+```
+
+Commit `.ctx/brain.md`, `.ctx/tasks.json`, `.ctx/handoff.md`, and `.ctx/system_prompt.md` if you want the project brain to travel with the code. `.ctx/watch.log` is ignored.
+
+## Project Layout
+
+```text
+contextdrop/
+  ctx.py                  # no-install launcher
+  pyproject.toml          # optional install metadata
+  README.md
+  contextdrop/
+    cli.py                # small argparse command router
+    constants.py
+    config.py
+    commands/             # command behavior
+    services/             # clipboard, filesystem, parsing helpers
+    core/                 # prompt/report builders
+    utils/                # logging and formatting
+  tests/
+```
+
+## For Developers
+
+Compile-check the package:
+
+```powershell
+python -m compileall contextdrop
+```
+
+Run without installing:
+
+```powershell
+python -m contextdrop --help
+```
+
+Install only when you want a global/local `ctx` command:
+
+```powershell
+python -m pip install -e .
+```
